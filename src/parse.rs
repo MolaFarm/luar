@@ -3,38 +3,181 @@ use crate::lex::{Token, Lex};
 use crate::value::Value;
 use crate::bytecode::ByteCode;
 
-
 #[derive(Debug)]
 pub struct ParseProto {
     pub constants: Vec::<Value>,
     pub byte_codes: Vec::<ByteCode>,
+    locals: Vec::<String>,
+    lex: Lex,
 }
 
-pub fn load(input: File) -> ParseProto {
-    let mut constants: Vec<Value> = Vec::new();
-    let mut byte_codes: Vec<ByteCode> = Vec::new();
-    let mut lex = Lex::new(input);
+impl ParseProto {
+    pub fn load(input: File) -> ParseProto {
+        let mut proto = ParseProto {
+            constants: Vec::new(),
+            byte_codes: Vec::new(),
+            locals: Vec::new(),
+            lex: Lex::new(input),
+        };
 
-    loop {
-        match lex.next() {
-            Token::Name(name) => { // `Name LiteralString` as function call
-                constants.push(Value::String(name));
-                byte_codes.push(ByteCode::GetGlobal(0, (constants.len()-1) as u8));
+        proto.chunk();
 
-                if let Token::String(s) = lex.next() {
-                    constants.push(Value::String(s));
-                    byte_codes.push(ByteCode::LoadConst(1, (constants.len()-1) as u8));
-                    byte_codes.push(ByteCode::Call(0, 1));
-                } else {
-                    panic!("expected string");
+        println!("\n---- Start of ParseProto ----");
+        println!("constants: {:?}", &proto.constants);
+        println!("byte_codes:");
+        for c in proto.byte_codes.iter() {
+            println!("  {:?}", c);
+        }
+        println!("---- End of ParseProto ----\n");
+
+        proto
+    }
+
+    fn chunk(&mut self) {
+        loop {
+            match self.lex.next() {
+                Some(Token::Name(name)) => {
+                    match self.lex.peek() {
+                        Some(&Token::Assign) => self.assignment(name),
+                        Some(_) => self.function_call(name),
+                        None => {}
+                    }
                 }
+                Some(Token::Local) => self.local(),
+                Some(t) => panic!("unexpected token: {t:?}"),
+                None => break
             }
-            Token::Eos => break,
-            t => panic!("unexpected token: {t:?}"),
         }
     }
 
-    dbg!(&constants);
-    dbg!(&byte_codes);
-    ParseProto { constants, byte_codes }
+    // Name LiteralString
+    // Name ( exp )
+    fn function_call(&mut self, name: String) {
+        let ifunc = self.locals.len();
+        let iarg = ifunc + 1;
+
+        // function, variable
+        let code = self.load_var(ifunc, name);
+        self.byte_codes.push(code);
+
+        // argument, (exp) or "string"
+        match self.lex.next() {
+            Some(Token::ParL) => { // '('
+                self.load_exp(iarg);
+
+                if self.lex.next() != Some(Token::ParR) { // ')'
+                    panic!("Expect `)` get None");
+                }
+            }
+            Some(Token::String(s)) => {
+                let code = self.load_const(iarg, Value::String(s));
+                self.byte_codes.push(code);
+            }
+            _ => panic!("expected string"),
+        }
+
+        self.byte_codes.push(ByteCode::Call(ifunc as u8, 1));
+    }
+
+    // local Name = exp
+    fn local(&mut self) {
+        let var = match self.lex.next() {
+            Some(Token::Name(var)) => var,
+            Some(t) => panic!("Expect variable, got {t:?}"),
+            _ => panic!("Invalid end")
+        };
+
+        match self.lex.next() {
+            Some(Token::Assign) => {},
+            _ => panic!("Expected `=`"),
+        }
+
+        self.load_exp(self.locals.len());
+        // add to locals after load_exp()
+        self.locals.push(var);
+    }
+
+    fn assignment(&mut self, var: String) {
+        self.lex.next(); // `=`
+
+        if let Some(i) = self.get_local(&var) {
+            // local variable
+            self.load_exp(i);
+        } else {
+            // global variable
+            let dst = self.add_const(Value::String(var)) as u8;
+
+            let code = match self.lex.next() {
+                // from const values
+                Some(Token::Nil) => ByteCode::SetGlobalConst(dst, self.add_const(Value::Nil) as u8),
+                Some(Token::True) => ByteCode::SetGlobalConst(dst, self.add_const(Value::Boolean(true)) as u8),
+                Some(Token::False) => ByteCode::SetGlobalConst(dst, self.add_const(Value::Boolean(false)) as u8),
+                Some(Token::Integer(i)) => ByteCode::SetGlobalConst(dst, self.add_const(Value::Integer(i)) as u8),
+                Some(Token::Float(f)) => ByteCode::SetGlobalConst(dst, self.add_const(Value::Float(f)) as u8),
+                Some(Token::String(s)) => ByteCode::SetGlobalConst(dst, self.add_const(Value::String(s)) as u8),
+
+                // from variable
+                Some(Token::Name(var_name)) =>
+                    if let Some(i) = self.get_local(&var_name) {
+                        // local variable
+                        ByteCode::SetGlobal(dst, i as u8)
+                    } else {
+                        // global variable
+                        ByteCode::SetGlobalGlobal(dst, self.add_const(Value::String(var_name)) as u8)
+                    }
+
+                _ => panic!("invalid argument"),
+            };
+            self.byte_codes.push(code);
+        }
+    }
+
+    /// check if a value is already in constants table, if is return the postion
+    /// else, return the top index of the constants table
+    fn add_const(&mut self, c: Value) -> usize {
+        let constants = &mut self.constants;
+        constants.iter().position(|v| v == &c)
+            .unwrap_or_else(|| {
+                constants.push(c);
+                constants.len() - 1
+            })
+    }
+
+    fn load_const(&mut self, dst: usize, c: Value) -> ByteCode {
+        ByteCode::LoadConst(dst as u8, self.add_const(c) as u16)
+    }
+
+    fn load_var(&mut self, dst: usize, name: String) -> ByteCode {
+        if let Some(i) = self.get_local(&name) {
+            // local variable
+            ByteCode::Move(dst as u8, i as u8)
+        } else {
+            // global variable
+            let ic = self.add_const(Value::String(name));
+            ByteCode::GetGlobal(dst as u8, ic as u8)
+        }
+    }
+
+    fn get_local(&self, name: &str) -> Option<usize> {
+        self.locals.iter().rposition(|v| v == name)
+    }
+
+    fn load_exp(&mut self, dst: usize) {
+        let code = match self.lex.next() {
+            Some(Token::Nil) => ByteCode::LoadNil(dst as u8),
+            Some(Token::True) => ByteCode::LoadBool(dst as u8, true),
+            Some(Token::False) => ByteCode::LoadBool(dst as u8, false),
+            Some(Token::Integer(i)) =>
+                if let Ok(ii) = i16::try_from(i) {
+                    ByteCode::LoadInt(dst as u8, ii)
+                } else {
+                    self.load_const(dst, Value::Integer(i))
+                }
+            Some(Token::Float(f)) => self.load_const(dst, Value::Float(f)),
+            Some(Token::String(s)) => self.load_const(dst, Value::String(s)),
+            Some(Token::Name(var)) => self.load_var(dst, var),
+            _ => panic!("invalid argument"),
+        };
+        self.byte_codes.push(code);
+    }
 }
