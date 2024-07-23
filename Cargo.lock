@@ -5,3 +5,14 @@ version = 3
 [[package]]
 name = "luar"
 version = "0.1.0"
+dependencies = [
+ "luargc",
+]
+
+[[package]]
+name = "luargc"
+version = "0.1.0"
+
+[[package]]
+name = "luargc_derive"
+version = "0.1.0"

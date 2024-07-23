@@ -1,18 +1,18 @@
-use std::fs::File;
+use std::io::Read;
 use crate::lex::{Token, Lex};
 use crate::value::Value;
 use crate::bytecode::ByteCode;
 
 #[derive(Debug)]
-pub struct ParseProto {
+pub struct ParseProto<T:Read> {
     pub constants: Vec::<Value>,
     pub byte_codes: Vec::<ByteCode>,
     locals: Vec::<String>,
-    lex: Lex,
+    lex: Lex<T>,
 }
 
-impl ParseProto {
-    pub fn load(input: File) -> ParseProto {
+impl<T:Read> ParseProto<T> {
+    pub fn load(input: T) -> ParseProto<T> {
         let mut proto = ParseProto {
             constants: Vec::new(),
             byte_codes: Vec::new(),
@@ -70,7 +70,7 @@ impl ParseProto {
                 }
             }
             Some(Token::String(s)) => {
-                let code = self.load_const(iarg, Value::String(s));
+                let code = self.load_const(iarg, s);
                 self.byte_codes.push(code);
             }
             _ => panic!("expected string"),
@@ -105,16 +105,16 @@ impl ParseProto {
             self.load_exp(i);
         } else {
             // global variable
-            let dst = self.add_const(Value::String(var)) as u8;
+            let dst = self.add_const(var) as u8;
 
             let code = match self.lex.next() {
                 // from const values
-                Some(Token::Nil) => ByteCode::SetGlobalConst(dst, self.add_const(Value::Nil) as u8),
-                Some(Token::True) => ByteCode::SetGlobalConst(dst, self.add_const(Value::Boolean(true)) as u8),
-                Some(Token::False) => ByteCode::SetGlobalConst(dst, self.add_const(Value::Boolean(false)) as u8),
-                Some(Token::Integer(i)) => ByteCode::SetGlobalConst(dst, self.add_const(Value::Integer(i)) as u8),
-                Some(Token::Float(f)) => ByteCode::SetGlobalConst(dst, self.add_const(Value::Float(f)) as u8),
-                Some(Token::String(s)) => ByteCode::SetGlobalConst(dst, self.add_const(Value::String(s)) as u8),
+                Some(Token::Nil) => ByteCode::SetGlobalConst(dst, self.add_const(()) as u8),
+                Some(Token::True) => ByteCode::SetGlobalConst(dst, self.add_const(true) as u8),
+                Some(Token::False) => ByteCode::SetGlobalConst(dst, self.add_const(false) as u8),
+                Some(Token::Integer(i)) => ByteCode::SetGlobalConst(dst, self.add_const(i) as u8),
+                Some(Token::Float(f)) => ByteCode::SetGlobalConst(dst, self.add_const(f) as u8),
+                Some(Token::String(s)) => ByteCode::SetGlobalConst(dst, self.add_const(s) as u8),
 
                 // from variable
                 Some(Token::Name(var_name)) =>
@@ -123,7 +123,7 @@ impl ParseProto {
                         ByteCode::SetGlobal(dst, i as u8)
                     } else {
                         // global variable
-                        ByteCode::SetGlobalGlobal(dst, self.add_const(Value::String(var_name)) as u8)
+                        ByteCode::SetGlobalGlobal(dst, self.add_const(var_name) as u8)
                     }
 
                 _ => panic!("invalid argument"),
@@ -134,7 +134,10 @@ impl ParseProto {
 
     /// check if a value is already in constants table, if is return the postion
     /// else, return the top index of the constants table
-    fn add_const(&mut self, c: Value) -> usize {
+    fn add_const<K>(&mut self, c: K) -> usize 
+        where K:Into<Value>
+    {
+        let c = c.into();
         let constants = &mut self.constants;
         constants.iter().position(|v| v == &c)
             .unwrap_or_else(|| {
@@ -143,7 +146,9 @@ impl ParseProto {
             })
     }
 
-    fn load_const(&mut self, dst: usize, c: Value) -> ByteCode {
+    fn load_const<K>(&mut self, dst: usize, c: K) -> ByteCode
+        where K:Into<Value>
+    {
         ByteCode::LoadConst(dst as u8, self.add_const(c) as u16)
     }
 
@@ -153,7 +158,7 @@ impl ParseProto {
             ByteCode::Move(dst as u8, i as u8)
         } else {
             // global variable
-            let ic = self.add_const(Value::String(name));
+            let ic = self.add_const(name);
             ByteCode::GetGlobal(dst as u8, ic as u8)
         }
     }
@@ -174,7 +179,7 @@ impl ParseProto {
                     self.load_const(dst, Value::Integer(i))
                 }
             Some(Token::Float(f)) => self.load_const(dst, Value::Float(f)),
-            Some(Token::String(s)) => self.load_const(dst, Value::String(s)),
+            Some(Token::String(s)) => self.load_const(dst, s),
             Some(Token::Name(var)) => self.load_var(dst, var),
             _ => panic!("invalid argument"),
         };

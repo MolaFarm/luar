@@ -1,6 +1,6 @@
-[package]
-name = "luar"
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
+[workspace]
+members = [
+    "luar",
+    "luargc",
+    "luargc_derive",
+]
