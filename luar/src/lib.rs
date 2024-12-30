@@ -7,3 +7,4 @@ pub mod lualib;
 pub mod error;
 mod macros;
 mod vhash;
+mod utils;

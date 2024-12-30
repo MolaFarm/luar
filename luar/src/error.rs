@@ -2,6 +2,6 @@ pub enum Error {
 
 }
 
-pub struct traceback {
+pub struct Traceback {
     
 }

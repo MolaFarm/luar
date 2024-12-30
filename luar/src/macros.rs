@@ -1,20 +1,3 @@
-
-#[deprecated(
-    since = "0.1.0",
-    note = "Macro design for LuaState::rootproto which is removed"
-)]
-#[macro_export]
-/// ## unwarp_option_rc
-/// It will try to convert `Option<Rc<RefCell<T>>>` to `&T`
-macro_rules! unwarp_option_rc {
-    ($option:expr) => {
-        match $option {
-            Some(ref rc_refcell) => rc_refcell.borrow(),
-            None => panic!("Called `unwarp_rc!` on a `None` value"),
-        }
-    };
-}
-
 #[macro_export]
 macro_rules! vm_exec_input_debug {
     ($i:expr) => {
@@ -40,9 +23,9 @@ macro_rules! vm_exec_input_debug {
 macro_rules! vm_exec_input {
     ($i:expr) => {
         {
-            let mut ls = vm::LuaState::new();
-            let proto = parse::ParseProto::load($i);
-            ls.run(&proto,0,0,0)
+            use std::io::BufReader;
+            let proto = parse::load(BufReader::new($i));
+            vm::ExeState::new().execute(&proto, &Vec::new());
         }
     };
 }

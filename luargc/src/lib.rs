@@ -1,3 +1,5 @@
-pub fn add(left: usize, right: usize) -> usize {
-    left + right
+
+
+pub fn add(a:u8, b:u8) -> u8 {
+    a+b
 }

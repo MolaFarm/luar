@@ -4,3 +4,4 @@ members = [
     "luargc",
     "luargc_derive",
 ]
+resolver = "2"
